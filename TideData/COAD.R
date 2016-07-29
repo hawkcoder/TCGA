@@ -73,46 +73,111 @@ apply(d.manifest, 1, copyfiles <- function(aRow) {
   file.remove(filepath)
 } )
 
-############ 2016-07-22: read and make clinical data.frame
+# ############ 2016-07-22: read and make clinical data.frame
+# library(xml2)
+# library(RMySQL)
+# 
+# # read clinical files
+# v.file.names = dir(path = "E:/DATA/TCGA-Data/COAD/Clinical", pattern = "*.xml", recursive = T, full.names = T)
+# 
+# # get a sample file to get clinical data.frame's colnames
+# root = as_list(read_xml(v.file.names[1]))
+# v.attr.name = names(root[[2]]) 
+# v.attr.value = vector()
+# 
+# d.coad.clinical = data.frame(matrix(NA, nrow = length(v.file.names), ncol = length(v.attr.name)), stringsAsFactors = F)
+# colnames(d.coad.clinical) = v.attr.name
+# 
+# # first loop: retrive clinical files
+# for (i.file in 1:length(v.file.names)) {
+#   
+#   # tryCatch(expr = {root = as_list(read_xml(v.file.names[i.file]))},
+#   #          warning = function(war){
+#   #            print(war)
+#   #          },error = function(err){
+#   #            print(v.file.names[i.file])
+#   #            next()
+#   #          },finally = {next()})
+#   # 
+#   # v.attr.name = names(root[[2]])
+#   
+#   root = as_list(read_xml(v.file.names[i.file]))
+#   # second loop: retrive every attribute and add to data.frame
+#   for( name in v.attr.name) {
+#     if(length(root[[2]][[name]]) == 1 && length(root[[2]][[name]][[1]]) == 1) {
+#       d.coad.clinical[i.file,name] = root[[2]][[name]][[1]]
+#     }else{
+#       d.coad.clinical[i.file,name] = "NULL"
+#     }
+#   }
+# }
+# 
+# #d.coad.clinical[i.file,]
+# #v.file.names[i.file]
+
+############################ 2016-07-29: read and make clinical data.frame
 library(xml2)
 library(RMySQL)
 
 # read clinical files
 v.file.names = dir(path = "E:/DATA/TCGA-Data/COAD/Clinical", pattern = "*.xml", recursive = T, full.names = T)
 
-# get a sample file to get clinical data.frame's colnames
-root = as_list(read_xml(v.file.names[1]))
-v.attr.name = names(root[[2]]) 
-v.attr.value = vector()
+## get a sample file to get clinical data.frame's colnames
+xml.nodes = xml_find_all(read_xml(v.file.names[1]), "//*")
+v.name = vector()
+for (lst in xml.nodes) {
+  # if it is a leaf element, then leaves
+  if(length(xml_find_all(lst, ".//*")) == 0)
+  {
+    v.name = c(v.name, xml_name(lst))
+  }
+}
+# delete name which have copies
+copies = unique(v.name[duplicated(v.name)])
+v.name = v.name[which(!v.name %in% copies)]
 
-d.coad.clinical = data.frame(matrix(NA, nrow = length(v.file.names), ncol = length(v.attr.name)), stringsAsFactors = F)
-colnames(d.coad.clinical) = v.attr.name
+
+v.clinical.name = v.name
+# get common attribute names
+for (file in v.file.names) {
+  xml.nodes = xml_find_all(read_xml(file), "//*")
+  v.xml.name = xml_name(xml.nodes)
+  copies = unique(v.xml.name[duplicated(v.xml.name)])
+  
+  v.xml.name = v.xml.name[which(!v.xml.name %in% copies)]
+  v.clinical.name = intersect(v.clinical.name, v.xml.name)
+}
+
+## start bulid a data.frame
+d.coad.clinical = data.frame(matrix(NA, nrow = length(v.file.names), ncol = length(v.clinical.name)), stringsAsFactors = F)
+colnames(d.coad.clinical) = v.clinical.name
+
 
 # first loop: retrive clinical files
 for (i.file in 1:length(v.file.names)) {
-  #root = as_list(read_xml(v.file.names[i.file]))
-  tryCatch(expr = {root = as_list(read_xml(v.file.names[i.file]))},
-           warning = function(war){
-             print(war)
-           },error = function(err){
-             print(v.file.names[i.file])
-             next()
-           },finally = {next()})
   
-  v.attr.name = names(root[[2]])
+  # first step: comment the second step, execute this step to find which file is invalid
+  # 
+  # second step: retrive every attribute and add to data.frame
+  xml.nodes = xml_find_all(read_xml(v.file.names[i.file]), "//*")
+  v.xml.name = xml_name(xml.nodes)
+  v.xml.value = xml_text(xml.nodes)
   
-  # second loop: retrive every attribute and add to data.frame
-  for( name in v.attr.name) {
-    if(length(root[[2]][[name]]) == 1 && length(root[[2]][[name]][[1]]) == 1) {
-      d.coad.clinical[i.file,name] = root[[2]][[name]][[1]]
-    }else{
-      d.coad.clinical[i.file,name] = "NULL"
-    }
-  }
+  order1 =  which(v.xml.name %in% v.clinical.name)
+  v.xml.name = v.xml.name[order1]
+  v.xml.value = v.xml.value[order1]
+  names(v.xml.value) = v.xml.name
+  
+  # add to data.frame
+  d.coad.clinical[i.file,] = v.xml.value[v.clinical.name]
 }
 
-#d.coad.clinical[i.file,]
-#v.file.names[i.file]
+# save file
+save(d.coad.clinical, file = 'E:/DATA/TCGA-RDATA/COAD/coad.clinical.RData')
+
+con.coad = dbConnect(MySQL(), host = '127.0.0.1', dbname = 'tcga.coad', user = 'root', password = 'root')
+dbWriteTable(con.coad, name = "tcga_coad_clinical", value = d.coad.clinical, row.names = F, overwrite = T)
+
 
 ############ 2016-07-22: read metadata files, map patients id to mRNA expression file uuid
 library(jsonlite)
